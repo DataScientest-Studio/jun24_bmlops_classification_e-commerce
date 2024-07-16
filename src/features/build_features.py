@@ -80,7 +80,7 @@ class DataImporter:
 
 
 class ImagePreprocessor:
-    def __init__(self, filepath="data/preprocessed/image_train"):
+    def __init__(self, filepath="data/raw/image_train"):
         self.filepath = filepath
 
     def preprocess_images_in_df(self, df):

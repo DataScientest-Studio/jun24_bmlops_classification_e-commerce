@@ -64,7 +64,7 @@ class TextLSTMModel:
 
         lstm_callbacks = [
             ModelCheckpoint(
-                filepath="models/best_lstm_model.h5", save_best_only=True
+                filepath="models/best_lstm_model.keras", save_best_only=True
             ),  # Enregistre le meilleur modèle
             EarlyStopping(
                 patience=3, restore_best_weights=True
@@ -145,7 +145,7 @@ class ImageVGG16Model:
 
         vgg_callbacks = [
             ModelCheckpoint(
-                filepath="models/best_vgg16_model.h5", save_best_only=True
+                filepath="models/best_vgg16_model.keras", save_best_only=True
             ),  # Enregistre le meilleur modèle
             EarlyStopping(
                 patience=3, restore_best_weights=True
@@ -173,75 +173,65 @@ class concatenate:
         img_array = preprocess_input(img_array)
         return img_array
 
-    def predict(
-        self, X_train, y_train, new_samples_per_class=50, max_sequence_length=10
-    ):
-        num_classes = 27
+    def predict(self, X_train, y_train, new_samples_per_class=50, max_sequence_length=10):
+        num_classes = 27  # Adjust according to your actual number of classes
 
         new_X_train = pd.DataFrame(columns=X_train.columns)
-        new_y_train = pd.DataFrame(
-            columns=[0]
-        )  # Créez la structure pour les étiquettes
+        new_y_train = pd.Series(dtype=int)  # Initialize an empty Series for y_train
 
-        # Boucle à travers chaque classe
+        # Resample for each class
         for class_label in range(num_classes):
-            # Indices des échantillons appartenant à la classe actuelle
             indices = np.where(y_train == class_label)[0]
+            if len(indices) >= new_samples_per_class:
+                sampled_indices = resample(
+                    indices, n_samples=new_samples_per_class, replace=False, random_state=42
+                )
+                new_X_train = pd.concat([new_X_train, X_train.iloc[sampled_indices]])
+                new_y_train = pd.concat([new_y_train, pd.Series(y_train[sampled_indices])])
+            else:
+                print(f"Not enough samples for class {class_label}")
 
-            # Sous-échantillonnage aléatoire pour sélectionner 'new_samples_per_class' échantillons
-            sampled_indices = resample(
-                indices, n_samples=new_samples_per_class, replace=False, random_state=42
-            )
-
-            # Ajout des échantillons sous-échantillonnés et de leurs étiquettes aux DataFrames
-            new_X_train = pd.concat([new_X_train, X_train.loc[sampled_indices]])
-            new_y_train = pd.concat([new_y_train, y_train.loc[sampled_indices]])
-
-        # Réinitialiser les index des DataFrames
+        # Reset index for the new dataframes
         new_X_train = new_X_train.reset_index(drop=True)
         new_y_train = new_y_train.reset_index(drop=True)
-        new_y_train = new_y_train.values.reshape(1350).astype("int")
+        
+        print(f"Resampled X_train shape: {new_X_train.shape}")
+        print(f"Resampled y_train shape: {new_y_train.shape}")
 
-        # Charger les modèles préalablement sauvegardés
+        # Check if new_y_train has the correct shape before reshaping
+        if len(new_y_train) != num_classes * new_samples_per_class:
+            raise ValueError(f"Resampled y_train length is {len(new_y_train)}, expected {num_classes * new_samples_per_class}")
+
+        # Convert to the correct shape
+        new_y_train = new_y_train.values.reshape((num_classes * new_samples_per_class,)).astype("int")
+
+        # Load the models
         tokenizer = self.tokenizer
         lstm_model = self.lstm
         vgg16_model = self.vgg16
 
+        # Text preprocessing
         train_sequences = tokenizer.texts_to_sequences(new_X_train["description"])
-        train_padded_sequences = pad_sequences(
-            train_sequences, maxlen=10, padding="post", truncating="post"
-        )
+        train_padded_sequences = pad_sequences(train_sequences, maxlen=max_sequence_length, padding="post", truncating="post")
 
-        # Paramètres pour le prétraitement des images
-        target_size = (
-            224,
-            224,
-            3,
-        )  # Taille cible pour le modèle VGG16, ajustez selon vos besoins
-
-        images_train = new_X_train["image_path"].apply(
-            lambda x: self.preprocess_image(x, target_size)
-        )
-
+        # Image preprocessing
+        target_size = (224, 224, 3)
+        images_train = new_X_train["image_path"].apply(lambda x: self.preprocess_image(x, target_size))
         images_train = tf.convert_to_tensor(images_train.tolist(), dtype=tf.float32)
 
+        # Model predictions
         lstm_proba = lstm_model.predict([train_padded_sequences])
-
         vgg16_proba = vgg16_model.predict([images_train])
 
         return lstm_proba, vgg16_proba, new_y_train
 
     def optimize(self, lstm_proba, vgg16_proba, y_train):
-        # Recherche des poids optimaux en utilisant la validation croisée
         best_weights = None
         best_accuracy = 0.0
 
-        for lstm_weight in np.linspace(0, 1, 101):  # Essayer différents poids pour LSTM
-            vgg16_weight = 1.0 - lstm_weight  # Le poids total doit être égal à 1
-
-            combined_predictions = (lstm_weight * lstm_proba) + (
-                vgg16_weight * vgg16_proba
-            )
+        for lstm_weight in np.linspace(0, 1, 101):
+            vgg16_weight = 1.0 - lstm_weight
+            combined_predictions = (lstm_weight * lstm_proba) + (vgg16_weight * vgg16_proba)
             final_predictions = np.argmax(combined_predictions, axis=1)
             accuracy = accuracy_score(y_train, final_predictions)
 
