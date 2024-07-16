@@ -74,7 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description= "Input data")
     
     parser.add_argument("--dataset_path", default = "data/preprocessed/X_train_update.csv", type=str,help="File path for the input CSV file.")
-    parser.add_argument("--images_path", default = "data/preprocessed/image_train", type=str,  help="Base path for the images.")
+    parser.add_argument("--images_path", default = "data/raw/image_train", type=str,  help="Base path for the images.")
     args = parser.parse_args()
 
     # Charger les configurations et modèles
@@ -82,8 +82,8 @@ def main():
         tokenizer_config = json_file.read()
     tokenizer = keras.preprocessing.text.tokenizer_from_json(tokenizer_config)
 
-    lstm = keras.models.load_model("models/best_lstm_model.h5")
-    vgg16 = keras.models.load_model("models/best_vgg16_model.h5")
+    lstm = keras.models.load_model("models/best_lstm_model.keras")
+    vgg16 = keras.models.load_model("models/best_vgg16_model.keras")
 
     with open("models/best_weights.json", "r") as json_file:
         best_weights = json.load(json_file)
