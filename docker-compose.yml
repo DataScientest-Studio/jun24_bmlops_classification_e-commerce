@@ -15,7 +15,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SMTP__SMTP_USER: "de.airflow@gmail.com"
     AIRFLOW__SMTP__SMTP_PASSWORD: "cfsrvkongsobheta"
     AIRFLOW__SMTP__SMTP_MAIL_FROM: "de.airflow@gmail.com"
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pymongo}
+    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:- pymongo nltk tensorflow  typing-extensions>=4.6.0  scikit-learn}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -140,7 +140,7 @@ services:
       context: ./eventlyai
       dockerfile: Dockerfile
     ports:
-      - "8001:8000"
+      - "5001:5000"
     volumes:
       - ./eventlyai:/app
     networks:

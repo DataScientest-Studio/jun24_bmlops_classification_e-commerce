@@ -1,7 +1,11 @@
 fastapi
 uvicorn
-pydantic
-numpy
 tensorflow
-requests
-json
+pydantic
+python-jose
+python-multipart
+Pillow
+numpy
+sqlalchemy
+psycopg2-binary
+nltk
