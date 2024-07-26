@@ -1,0 +1,34 @@
+name: Airflow Workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  airflow-setup:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: |
+          pip install -r airflow/requirements.txt
+
+      - name: Build Docker image
+        run: docker build -t airflow-image -f airflow/Dockerfile .
+
+      - name: Run Airflow Docker container
+        run: |
+          docker run -d -p 8080:8080 airflow-image
+
+      - name: Check Airflow webserver status
+        run: curl -sSf http://localhost:8080
+

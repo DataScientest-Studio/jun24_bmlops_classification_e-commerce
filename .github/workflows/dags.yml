@@ -1,0 +1,32 @@
+name: DAGs Workflow
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  dags-lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: |
+          pip install -r airflow/requirements.txt
+
+      - name: Lint DAG files
+        run: |
+          pylint airflow/dags/**/*.py
+
+      - name: Run DAG tests
+        run: |
+          pytest airflow/tests
+
