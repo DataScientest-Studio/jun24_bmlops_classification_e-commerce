@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, status
 from pydantic import BaseModel
 import numpy as np
 import tensorflow as tf
@@ -11,7 +11,6 @@ from jose import JWTError, jwt
 from datetime import datetime, timedelta
 import uvicorn
 from typing import Optional
-
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -48,6 +47,39 @@ class NewProductData(BaseModel):
     image: str  # base64 encoded image string
     category: str
 
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
+# Dummy user database
+fake_users_db = {
+    "admin": {
+        "username": "admin",
+        "password": "admin",
+        "role": "admin"
+    },
+    "user": {
+        "username": "user",
+        "password": "kiko",
+        "role": "user"
+    }
+}
+
+def verify_password(plain_password, hashed_password):
+    return plain_password == hashed_password
+
+def get_user(db, username: str):
+    return db.get(username)
+
+def authenticate_user(fake_db, username: str, password: str):
+    user = get_user(fake_db, username)
+    if not user or not verify_password(password, user["password"]):
+        return False
+    return user
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     if expires_delta:
@@ -58,19 +90,44 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
-@app.post("/api/auth")
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    # This example uses hardcoded credentials for simplicity
-    # In production, use a proper database and hashed passwords
-    if form_data.username == "user" and form_data.password == "password":
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": form_data.username}, expires_delta=access_token_expires
-        )
-        return {"access_token": access_token, "token_type": "bearer"}
-    raise HTTPException(
-        status_code=400, detail="Incorrect username or password"
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
     )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        token_data = TokenData(username=username)
+    except JWTError:
+        raise credentials_exception
+    user = get_user(fake_users_db, username=token_data.username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_active_user(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] not in ["admin", "user"]:
+        raise HTTPException(status_code=400, detail="Inactive user")
+    return current_user
+
+@app.post("/api/auth", response_model=Token)
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["username"]}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
 
 def preprocess_text(text):
     sequences = tokenizer.texts_to_sequences([text])
@@ -96,7 +153,7 @@ def get_db_connection():
     return conn
 
 @app.post("/api/predict")
-def predict(data: ProductData, token: str = Depends(oauth2_scheme)):
+def predict(data: ProductData, current_user: dict = Depends(get_current_active_user)):
     try:
         text_input = preprocess_text(data.description)
         image_input = preprocess_image(data.image)
@@ -113,31 +170,36 @@ def predict(data: ProductData, token: str = Depends(oauth2_scheme)):
         
         # Save prediction to the database
         conn = get_db_connection()
-        conn.execute("INSERT INTO predictions (description, image, prediction) VALUES (?, ?, ?)",
-                     (data.description, data.image, prediction))
+        conn.execute("INSERT INTO predictions (product_id, description, image, prediction) VALUES (?, ?, ?, ?)",
+                     (None, data.description, data.image, prediction))  # product_id is None for predictions
         conn.commit()
         conn.close()
 
+        logging.info(f"Prediction made for user {current_user['username']}: {prediction}")
         return {"prediction": prediction}
     except Exception as e:
         logging.error(f"Prediction error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/data-ingest")
-def data_ingest(new_data: NewProductData, token: str = Depends(oauth2_scheme)):
+def data_ingest(new_data: NewProductData, current_user: dict = Depends(get_current_active_user)):
+    if current_user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    
     try:
         conn = get_db_connection()
-        conn.execute("INSERT INTO products (description, image, category) VALUES (?, ?, ?)",
-                     (new_data.description, new_data.image, new_data.category))
+        conn.execute("INSERT INTO products (product_id, designation, description, image_id, prdtypecode) VALUES (?, ?, ?, ?, ?)",
+                     (None, None, new_data.description, new_data.image, new_data.category))  # product_id, designation, image_id are None
         conn.commit()
         conn.close()
+        logging.info(f"Data ingested by admin {current_user['username']}")
         return {"message": "Data ingested successfully"}
     except Exception as e:
         logging.error(f"Data ingestion error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/monitor")
-def monitor(token: str = Depends(oauth2_scheme)):
+def monitor(current_user: dict = Depends(get_current_active_user)):
     try:
         # Example: return model metrics and health status
         metrics = {
@@ -145,6 +207,7 @@ def monitor(token: str = Depends(oauth2_scheme)):
             "accuracy": 0.95,  # Example metric
             "status": "healthy"
         }
+        logging.info(f"Monitor accessed by user {current_user['username']}")
         return metrics
     except Exception as e:
         logging.error(f"Monitoring error: {str(e)}")
